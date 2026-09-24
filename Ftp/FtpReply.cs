@@ -26,7 +26,16 @@ public sealed class FtpReply
         Lines = lines;
     }
 
-    public string Message => string.Join(" ", Lines);
+    public string Message
+    {
+        get
+        {
+            if (Lines.Count == 0)
+                return "";
+            var parts = Lines.Select(l => l.Length > 4 && char.IsDigit(l[0]) && l[3] is '-' or ' ' ? l[4..] : l);
+            return string.Join(" ", parts);
+        }
+    }
 
     public override string ToString() => $"{Code} {string.Join(" | ", Lines)}";
 }

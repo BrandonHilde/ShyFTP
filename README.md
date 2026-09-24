@@ -38,6 +38,21 @@ dotnet build
 dotnet run
 ```
 
+Run the unit tests:
+
+```bash
+dotnet test
+```
+
+Live integration tests run automatically when `python` and `pyftpdlib` are
+available (`pip install pyftpdlib`); they spin up a throwaway FTP server on
+localhost and exercise the engine end-to-end. Without them those tests are
+skipped. To run a server by hand:
+
+```bash
+python Tests/tools/ftp_server.py [root] [port]
+```
+
 To produce a standalone executable:
 
 ```bash
@@ -129,14 +144,14 @@ upload
 | Command | Description |
 | --- | --- |
 | `folder [path]` / `cd [path]` | Show or change the current local folder |
-| `map <server> [remotePath]` | Map this folder to a server and remote path |
+| `map` / `use` `<server> [remotePath]` | Map this folder to a server and remote path |
 | `unmap` | Remove this folder's mapping |
 | `status` | Show mapping, connection, and change-list state |
 | `servers` | List defined servers |
 | `server-add <name> <host> [port] [user] [pass]` | Add a server (prompts for missing values) |
 | `server-edit <name> <field> <value>` | Edit a server field |
 | `server-remove <name>` | Delete a server |
-| `connect` / `disconnect` | Open / close the FTP connection |
+| `connect` / `disconnect` (aliases `open` / `close`) | Open / close the FTP connection |
 | `verbose` | Toggle raw FTP command logging |
 
 Editable server fields: `host`, `port`, `user`, `pass`, `security`, `passive`,
@@ -147,13 +162,17 @@ Editable server fields: `host`, `port`, `user`, `pass`, `security`, `passive`,
 | Command | Description |
 | --- | --- |
 | `pwd` | Print the remote working directory |
-| `ls [path]` / `ll [path]` | List a remote directory (names / detailed) |
+| `ls` / `dir` `[path]` / `ll [path]` | List a remote directory (names / detailed) |
 | `mkdir <remotePath>` | Create a remote directory (recursively) |
 | `rmdir [-r] <remotePath>` | Remove a remote directory (`-r` asks to recurse) |
 | `rm <remotePath>` | Delete a remote file |
 | `rename <from> <to>` | Rename a remote entry |
 | `get <remote> [local]` | Download one file |
 | `put <local> [remote]` | Upload one file |
+
+A relative `<local>` path to `get`/`put` is resolved against the shell's current
+local folder (not the process working directory); an absolute path is used as-is.
+A relative remote path is resolved against the folder's mapped remote path.
 
 ### Sync and changing files
 
@@ -224,13 +243,13 @@ remove .log         # drop matching items from the list
 upload              # upload whatever remains in the list
 ```
 
-`find <pattern>` is an alias for `add <pattern>`.
+`find` and `search` are aliases for `add`.
 
 ### Ignoring files
 
 | Command | Description |
 | --- | --- |
-| `pattern <glob>` | Select change-list items matching a glob |
+| `pattern` / `match` `<glob>` | Select change-list items matching a glob |
 | `ignore <pattern...>` | Add ignore rule(s) |
 | `ignore` | With items selected, ignore those exact paths |
 | `unignore <pattern>` | Remove an ignore rule |
@@ -253,12 +272,15 @@ Examples: `.txt`, `*.log`, `bin/**`, `.git/**`, `build/*.tmp`.
 
 - **Passwords are stored in plaintext** in the config file. This is a deliberate
   consequence of having no external dependencies (no DPAPI/secret-store
-  library). Protect the file with OS file permissions.
+  library). Protect the file with OS file permissions. The `server-add` password
+  prompt does not echo to the terminal.
 - **SFTP/SSH is not supported.** The engine implements FTP and FTPS only.
 - FTP servers that only support `LIST` (no `MLSD`) lose some metadata; modified
   times on such servers may be approximate.
 - Active mode (PORT) requires the server to be able to open a connection back to
   your machine; passive mode is the default and generally preferred.
+- If the server refuses `PROT P`, ShyFTP falls back to a clear-text data channel
+  and prints a warning after connecting.
 
 ## Project layout
 
@@ -273,4 +295,6 @@ Cli/Shell.cs               Interactive console shell
 Cli/ConsoleUtil.cs         Console helpers
 Util/GlobMatcher.cs        Glob / substring matching
 Util/PathUtil.cs           Path and size formatting helpers
+Tests/                     Unit + live integration tests (xUnit)
+Tests/tools/ftp_server.py  Local pyftpdlib launcher for manual testing
 ```

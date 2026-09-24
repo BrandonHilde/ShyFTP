@@ -1,0 +1,28 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ShyFTP", "ShyFTP.csproj", "{5B30AB0E-3E4C-4F2D-8B02-33CB925C1A6A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ShyFTP.Tests", "Tests\ShyFTP.Tests.csproj", "{F5C93392-F44A-454D-9235-DAC7C7385046}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{5B30AB0E-3E4C-4F2D-8B02-33CB925C1A6A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5B30AB0E-3E4C-4F2D-8B02-33CB925C1A6A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5B30AB0E-3E4C-4F2D-8B02-33CB925C1A6A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5B30AB0E-3E4C-4F2D-8B02-33CB925C1A6A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F5C93392-F44A-454D-9235-DAC7C7385046}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F5C93392-F44A-454D-9235-DAC7C7385046}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F5C93392-F44A-454D-9235-DAC7C7385046}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F5C93392-F44A-454D-9235-DAC7C7385046}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

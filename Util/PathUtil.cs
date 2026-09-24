@@ -23,13 +23,22 @@ public static class PathUtil
 
     public static string JoinRemote(string basePath, string relative)
     {
-        var b = (basePath ?? "").Replace('\\', '/').TrimEnd('/');
+        var b = (basePath ?? "").Replace('\\', '/');
         var r = (relative ?? "").Replace('\\', '/').TrimStart('/');
+
         if (r.Length == 0)
-            return b.Length == 0 ? "/" : b;
+        {
+            var trimmed = b.TrimEnd('/');
+            return trimmed.Length == 0 ? (b.StartsWith('/') ? "/" : "") : trimmed;
+        }
+
         if (b.Length == 0)
+            return r;
+
+        if (b == "/")
             return "/" + r;
-        return b + "/" + r;
+
+        return b.TrimEnd('/') + "/" + r;
     }
 
     public static string RemoteDirectoryName(string remotePath)

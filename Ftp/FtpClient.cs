@@ -21,13 +21,17 @@ public sealed class FtpClient : IDisposable
 
     private bool _passive;
     private bool _dataProtected;
-    private bool _supportsMlsd = true;
-    private bool _supportsSize = true;
-    private bool _supportsMdtm = true;
+    private bool _supportsMlsd;
+    private bool _supportsSize;
+    private bool _supportsMdtm;
     private bool _supportsMfmt;
     private long _lastProgressTicks;
+    private byte[]? _readBuffer;
+    private int _readPos;
+    private int _readLen;
 
     public bool IsConnected { get; private set; }
+    public bool IsDataProtected => _dataProtected;
     public ServerProfile Profile => _profile;
 
     public FtpClient(ServerProfile profile, Action<string>? log = null)
@@ -50,6 +54,8 @@ public sealed class FtpClient : IDisposable
 
         _control = new TcpClient { NoDelay = true };
         ConnectSocket(_control, host, port, _profile.TimeoutSeconds * 1000);
+        _control.ReceiveTimeout = _profile.TimeoutSeconds * 1000;
+        _control.SendTimeout = _profile.TimeoutSeconds * 1000;
         _controlStream = _control.GetStream();
 
         if (_profile.Security == FtpSecurity.ImplicitTls)
@@ -82,9 +88,14 @@ public sealed class FtpClient : IDisposable
 
             var prot = Send("PROT P");
             if (prot.Code == 200)
+            {
                 _dataProtected = true;
+            }
             else
+            {
+                _log?.Invoke("!! PROT P refused - data channel will NOT be TLS-protected.");
                 TrySend("PROT C");
+            }
         }
 
         SetBinaryMode();
@@ -114,7 +125,13 @@ public sealed class FtpClient : IDisposable
     {
         var feat = Send("FEAT");
         if (feat.Code != 211)
+        {
+            _supportsMlsd = true;
+            _supportsSize = true;
+            _supportsMdtm = true;
+            _supportsMfmt = false;
             return;
+        }
 
         foreach (var raw in feat.Lines)
         {
@@ -147,7 +164,7 @@ public sealed class FtpClient : IDisposable
         var first = text.IndexOf('"');
         var last = text.LastIndexOf('"');
         if (first >= 0 && last > first)
-            return text.Substring(first + 1, last - first - 1);
+            return text.Substring(first + 1, last - first - 1).Replace("\"\"", "\"");
         return text;
     }
 
@@ -155,10 +172,22 @@ public sealed class FtpClient : IDisposable
 
     public bool DirectoryExists(string path)
     {
+        string? previous = null;
+        try
+        {
+            previous = PrintWorkingDirectory();
+        }
+        catch (FtpException)
+        {
+        }
+
         var reply = Send("CWD " + path);
         if (reply.Code == 250)
         {
-            TrySend("CDUP");
+            if (previous != null)
+                Send("CWD " + previous);
+            else
+                TrySend("CDUP");
             return true;
         }
 
@@ -182,16 +211,18 @@ public sealed class FtpClient : IDisposable
         if (normalized.Length == 0 || normalized == "/" || normalized == ".")
             return;
 
-        var absolute = normalized.StartsWith('/');
-        var current = absolute ? "/" : "";
         var parts = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var current = normalized.StartsWith('/') ? "/" : "";
 
         foreach (var part in parts)
         {
             current = PathUtil.JoinRemote(current, part);
             var reply = Send("MKD " + current);
-            if (reply.Code is not (257 or 250) && reply.Code != 550)
-                throw new FtpException(reply.Code, $"MKD {current} failed: {reply.Message}");
+            if (reply.Code is 257 or 250)
+                continue;
+            if (reply.Code == 550 && DirectoryExists(current))
+                continue;
+            throw new FtpException(reply.Code, $"MKD {current} failed: {reply.Message}");
         }
     }
 
@@ -203,15 +234,18 @@ public sealed class FtpClient : IDisposable
         Expect("RNTO " + to, 250);
     }
 
-    public void DeleteDirectory(string path, bool recursive)
+    public void DeleteDirectory(string path, bool recursive, int depth = 0)
     {
         if (recursive)
         {
+            if (depth > 64)
+                throw new FtpException($"Directory tree too deep under '{path}'.");
+
             foreach (var item in List(path))
             {
                 var child = PathUtil.JoinRemote(path, item.Name);
                 if (item.IsDirectory)
-                    DeleteDirectory(child, true);
+                    DeleteDirectory(child, true, depth + 1);
                 else
                     DeleteFile(child);
             }
@@ -269,8 +303,10 @@ public sealed class FtpClient : IDisposable
             {
                 return ListMlsd(path);
             }
-            catch (FtpException)
+            catch (FtpException ex)
             {
+                if (ex.Code <= 0)
+                    throw;
                 _supportsMlsd = false;
             }
         }
@@ -403,7 +439,16 @@ public sealed class FtpClient : IDisposable
             File.Move(temp, localPath, true);
 
             if (TryGetModifiedTime(remotePath, out var remoteModified))
-                File.SetLastWriteTimeUtc(localPath, remoteModified);
+            {
+                try
+                {
+                    File.SetLastWriteTimeUtc(localPath, remoteModified);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+                {
+                    _log?.Invoke($"!! Could not adjust local timestamp of {localPath}: {ex.Message}");
+                }
+            }
         }
         catch
         {
@@ -436,15 +481,15 @@ public sealed class FtpClient : IDisposable
             TryGetModifiedTime(remotePath, out var remoteModified) &&
             Math.Abs((remoteModified - localModified).TotalSeconds) > 1)
         {
-            File.SetLastWriteTimeUtc(localPath, remoteModified);
+            try
+            {
+                File.SetLastWriteTimeUtc(localPath, remoteModified);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                _log?.Invoke($"!! Could not adjust local timestamp of {localPath}: {ex.Message}");
+            }
         }
-    }
-
-    public void Delete(string remotePath)
-    {
-        var reply = Send("DELE " + remotePath);
-        if (reply.Code is not (250 or 200))
-            throw new FtpException(reply.Code, $"DELE failed: {reply.Message}");
     }
 
     private void CopyStream(Stream source, Stream destination, long total, Action<long, long>? progress)
@@ -503,7 +548,12 @@ public sealed class FtpClient : IDisposable
                 throw new FtpException(preliminary.Code, $"Data command rejected: {preliminary.Message}");
 
             if (!_passive && listener != null)
-                dataClient = listener.AcceptTcpClient();
+            {
+                var acceptTask = listener.AcceptTcpClientAsync();
+                if (!acceptTask.Wait(_profile.TimeoutSeconds * 1000))
+                    throw new FtpException("Timed out waiting for the server's data connection.");
+                dataClient = acceptTask.GetAwaiter().GetResult();
+            }
 
             if (dataClient == null)
                 throw new FtpException("No data connection was established.");
@@ -573,20 +623,51 @@ public sealed class FtpClient : IDisposable
 
         var controlAddress = ((IPEndPoint)_control!.Client.RemoteEndPoint!).Address;
         if (!IPAddress.TryParse(host, out var pasvAddress))
-            return host;
-
-        if (pasvAddress.Equals(IPAddress.Any) || pasvAddress.Equals(IPAddress.None))
             return controlAddress.ToString();
 
-        if (IsPrivate(pasvAddress) && IsPublic(controlAddress))
+        if (IsUnusableAddress(pasvAddress))
+            return controlAddress.ToString();
+
+        if (IsPrivate(pasvAddress) && !IsPrivate(controlAddress))
             return controlAddress.ToString();
 
         return host;
     }
 
+    private static bool IsUnusableAddress(IPAddress address)
+    {
+        if (address.Equals(IPAddress.Any) || address.Equals(IPAddress.None))
+            return true;
+        if (address.Equals(IPAddress.Loopback) || address.Equals(IPAddress.IPv6Loopback))
+            return true;
+        if (address.IsIPv6LinkLocal || address.IsIPv6Multicast || address.IsIPv6SiteLocal)
+            return true;
+
+        if (address.AddressFamily == AddressFamily.InterNetwork)
+        {
+            var b = address.GetAddressBytes();
+            if (b[0] == 127 || (b[0] == 169 && b[1] == 254))
+                return true;
+        }
+
+        return false;
+    }
+
     private static bool IsPrivate(IPAddress address)
     {
-        if (address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+        if (IsUnusableAddress(address))
+            return true;
+
+        if (address.IsIPv4MappedToIPv6)
+            address = address.MapToIPv4();
+
+        if (address.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            var v6 = address.GetAddressBytes();
+            return (v6[0] & 0xfe) == 0xfc; // unique local fc00::/7
+        }
+
+        if (address.AddressFamily != AddressFamily.InterNetwork)
             return false;
 
         var b = address.GetAddressBytes();
@@ -596,12 +677,10 @@ public sealed class FtpClient : IDisposable
             return true;
         if (b[0] == 192 && b[1] == 168)
             return true;
-        if (b[0] == 127)
+        if (b[0] == 100 && b[1] >= 64 && b[1] <= 127)
             return true;
         return false;
     }
-
-    private static bool IsPublic(IPAddress address) => !IsPrivate(address);
 
     private Stream WrapDataStream(TcpClient client)
     {
@@ -655,10 +734,34 @@ public sealed class FtpClient : IDisposable
 
     private void WriteLine(string line)
     {
+        if (line.Contains('\r') || line.Contains('\n'))
+            throw new FtpException("Invalid control character in FTP command.");
         _log?.Invoke(">> " + (line.StartsWith("PASS", StringComparison.OrdinalIgnoreCase) ? "PASS ****" : line));
         var bytes = _encoding.GetBytes(line + "\r\n");
         _controlStream!.Write(bytes, 0, bytes.Length);
         _controlStream.Flush();
+    }
+
+    private int ReadBufferedByte()
+    {
+        if (_readPos >= _readLen)
+        {
+            _readBuffer ??= new byte[4096];
+            try
+            {
+                _readLen = _controlStream!.Read(_readBuffer, 0, _readBuffer.Length);
+            }
+            catch (IOException ex)
+            {
+                throw new FtpException("Connection lost: " + ex.Message);
+            }
+
+            _readPos = 0;
+            if (_readLen <= 0)
+                return -1;
+        }
+
+        return _readBuffer![_readPos++];
     }
 
     private string ReadLine()
@@ -666,16 +769,7 @@ public sealed class FtpClient : IDisposable
         var buffer = new List<byte>(128);
         while (true)
         {
-            int b;
-            try
-            {
-                b = _controlStream!.ReadByte();
-            }
-            catch (IOException ex)
-            {
-                throw new FtpException("Connection lost: " + ex.Message);
-            }
-
+            var b = ReadBufferedByte();
             if (b < 0)
                 throw new FtpException("Connection closed by server.");
             if (b == '\n')
@@ -752,9 +846,10 @@ public sealed class FtpClient : IDisposable
             switch (key)
             {
                 case "type":
-                    if (value.Equals("dir", StringComparison.OrdinalIgnoreCase) ||
-                        value.Equals("cdir", StringComparison.OrdinalIgnoreCase) ||
+                    if (value.Equals("cdir", StringComparison.OrdinalIgnoreCase) ||
                         value.Equals("pdir", StringComparison.OrdinalIgnoreCase))
+                        return null;
+                    if (value.Equals("dir", StringComparison.OrdinalIgnoreCase))
                         item.IsDirectory = true;
                     else if (value.Contains("slink", StringComparison.OrdinalIgnoreCase))
                         item.IsSymlink = true;
@@ -827,7 +922,11 @@ public sealed class FtpClient : IDisposable
 
         DateTime? modified = null;
         if (monthIndex >= 0 && day is >= 1 and <= 31)
+        {
             modified = new DateTime(year, monthIndex + 1, day, hour, minute, 0, DateTimeKind.Utc);
+            if (modified > DateTime.UtcNow.AddHours(1))
+                modified = modified.Value.AddYears(-1);
+        }
 
         return new FtpListItem
         {
@@ -898,15 +997,16 @@ public sealed class FtpClient : IDisposable
     {
         try
         {
-            var task = client.ConnectAsync(host, port);
-            if (!task.Wait(timeoutMs))
-                throw new FtpException($"Timed out connecting to {host}:{port}.");
-            task.GetAwaiter().GetResult();
+            using var cts = new CancellationTokenSource(timeoutMs);
+            client.ConnectAsync(host, port, cts.Token).GetAwaiter().GetResult();
         }
-        catch (AggregateException ex)
+        catch (OperationCanceledException)
         {
-            var inner = ex.InnerException ?? ex;
-            throw new FtpException($"Failed to connect to {host}:{port} - {inner.Message}");
+            throw new FtpException($"Timed out connecting to {host}:{port}.");
+        }
+        catch (Exception ex) when (ex is not FtpException)
+        {
+            throw new FtpException($"Failed to connect to {host}:{port} - {ex.Message}");
         }
     }
 

@@ -48,4 +48,31 @@ public static class ConsoleUtil
         var t = input.Trim().ToLowerInvariant();
         return t is "y" or "yes";
     }
+
+    public static string ReadSecret(string prompt)
+    {
+        Console.Write(prompt + ": ");
+        if (Console.IsInputRedirected)
+            return Console.ReadLine() ?? "";
+
+        var buffer = new System.Text.StringBuilder();
+        while (true)
+        {
+            var key = Console.ReadKey(true);
+            if (key.Key == ConsoleKey.Enter)
+                break;
+            if (key.Key == ConsoleKey.Backspace)
+            {
+                if (buffer.Length > 0)
+                    buffer.Length--;
+                continue;
+            }
+
+            if (!char.IsControl(key.KeyChar))
+                buffer.Append(key.KeyChar);
+        }
+
+        Console.WriteLine();
+        return buffer.ToString();
+    }
 }

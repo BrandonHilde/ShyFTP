@@ -219,6 +219,8 @@ public sealed class Shell : IDisposable
             _client.Connect();
             var pwd = _client.PrintWorkingDirectory();
             ConsoleUtil.Success($"Connected. Remote directory: {pwd}");
+            if (server.Security != FtpSecurity.None && !_client.IsDataProtected)
+                ConsoleUtil.Warn("Warning: the server refused PROT P - data transfers are NOT TLS-protected.");
             return true;
         }
         catch (Exception ex)
@@ -366,7 +368,7 @@ public sealed class Shell : IDisposable
         var host = args.Count > 1 ? args[1] : Prompt("Host");
         var portText = args.Count > 2 ? args[2] : Prompt("Port", "21");
         var username = args.Count > 3 ? args[3] : Prompt("Username", "anonymous");
-        var password = args.Count > 4 ? args[4] : Prompt("Password", "");
+        var password = args.Count > 4 ? args[4] : ConsoleUtil.ReadSecret("Password");
 
         if (!int.TryParse(portText, out var port))
             port = 21;
@@ -1262,7 +1264,9 @@ public sealed class Shell : IDisposable
             return;
         }
 
-        var local = Path.GetFullPath(args[0]);
+        var local = Path.IsPathRooted(args[0])
+            ? Path.GetFullPath(args[0])
+            : Path.GetFullPath(Path.Combine(_root, args[0]));
         if (!File.Exists(local))
         {
             ConsoleUtil.Error($"Local file not found: {local}");

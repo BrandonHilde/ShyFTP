@@ -47,7 +47,7 @@ public static class SyncEngine
         Action<string>? progress = null)
     {
         const int maxDepth = 64;
-        var result = new Dictionary<string, EntryInfo>(StringComparer.OrdinalIgnoreCase);
+        var result = new Dictionary<string, EntryInfo>(StringComparer.Ordinal);
         var visited = new HashSet<string>(StringComparer.Ordinal);
         var queue = new Queue<(string Absolute, string Relative, int Depth)>();
         queue.Enqueue((baseRemotePath, "", 0));
@@ -103,47 +103,83 @@ public static class SyncEngine
         string localRoot,
         string baseRemotePath)
     {
-        var keys = new HashSet<string>(local.Keys, StringComparer.OrdinalIgnoreCase);
-        keys.UnionWith(remote.Keys);
-
         var items = new List<SyncItem>();
-        foreach (var key in keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase))
+
+        var localRemaining = new Dictionary<string, EntryInfo>(local, StringComparer.Ordinal);
+        var remoteRemaining = new Dictionary<string, EntryInfo>(remote, StringComparer.Ordinal);
+
+        foreach (var key in local.Keys.Intersect(remote.Keys, StringComparer.Ordinal).OrderBy(k => k, StringComparer.Ordinal))
         {
-            local.TryGetValue(key, out var localInfo);
-            remote.TryGetValue(key, out var remoteInfo);
+            items.Add(BuildItem(key, local[key], remote[key], true, true, localRoot, baseRemotePath));
+            localRemaining.Remove(key);
+            remoteRemaining.Remove(key);
+        }
 
-            var hasLocal = local.ContainsKey(key);
-            var hasRemote = remote.ContainsKey(key);
+        var localByCi = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var k in localRemaining.Keys.OrderBy(k => k, StringComparer.Ordinal))
+            localByCi.TryAdd(k, k);
 
-            var item = new SyncItem
-            {
-                RelativePath = key,
-                LocalExists = hasLocal,
-                RemoteExists = hasRemote,
-                LocalSize = localInfo.Size,
-                LocalTime = localInfo.ModifiedUtc,
-                RemoteSize = remoteInfo.Size,
-                RemoteTime = remoteInfo.ModifiedUtc,
-                LocalFullPath = Path.Combine(localRoot, key.Replace('/', Path.DirectorySeparatorChar)),
-                RemoteFullPath = PathUtil.JoinRemote(baseRemotePath, key)
-            };
+        foreach (var remoteKey in remoteRemaining.Keys.OrderBy(k => k, StringComparer.Ordinal).ToList())
+        {
+            if (!localByCi.TryGetValue(remoteKey, out var localKey))
+                continue;
+            items.Add(BuildItem(localKey, localRemaining[localKey], remoteRemaining[remoteKey], true, true, localRoot, baseRemotePath));
+            localRemaining.Remove(localKey);
+            remoteRemaining.Remove(remoteKey);
+        }
 
-            if (hasLocal && !hasRemote)
-            {
-                item.State = SyncState.UploadNew;
-            }
-            else if (!hasLocal && hasRemote)
-            {
-                item.State = SyncState.DownloadNew;
-            }
-            else
-            {
-                var sizeDiffers = localInfo.Size != remoteInfo.Size;
-                var localNewer = localInfo.ModifiedUtc - remoteInfo.ModifiedUtc > TimeTolerance;
-                var remoteNewer = remoteInfo.ModifiedUtc - localInfo.ModifiedUtc > TimeTolerance;
+        foreach (var k in localRemaining.Keys.OrderBy(k => k, StringComparer.Ordinal))
+            items.Add(BuildItem(k, localRemaining[k], default, true, false, localRoot, baseRemotePath));
 
-                if (sizeDiffers)
+        foreach (var k in remoteRemaining.Keys.OrderBy(k => k, StringComparer.Ordinal))
+            items.Add(BuildItem(k, default, remoteRemaining[k], false, true, localRoot, baseRemotePath));
+
+        return items.OrderBy(i => i.RelativePath, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static SyncItem BuildItem(
+        string key,
+        EntryInfo localInfo,
+        EntryInfo remoteInfo,
+        bool hasLocal,
+        bool hasRemote,
+        string localRoot,
+        string baseRemotePath)
+    {
+        var item = new SyncItem
+        {
+            RelativePath = key,
+            LocalExists = hasLocal,
+            RemoteExists = hasRemote,
+            LocalSize = localInfo.Size,
+            LocalTime = localInfo.ModifiedUtc,
+            RemoteSize = remoteInfo.Size,
+            RemoteTime = remoteInfo.ModifiedUtc,
+            LocalFullPath = Path.Combine(localRoot, key.Replace('/', Path.DirectorySeparatorChar)),
+            RemoteFullPath = PathUtil.JoinRemote(baseRemotePath, key)
+        };
+
+        if (hasLocal && !hasRemote)
+        {
+            item.State = SyncState.UploadNew;
+        }
+        else if (!hasLocal && hasRemote)
+        {
+            item.State = SyncState.DownloadNew;
+        }
+        else
+        {
+            var sizeDiffers = localInfo.Size != remoteInfo.Size;
+            var localTimeKnown = localInfo.ModifiedUtc != default;
+            var remoteTimeKnown = remoteInfo.ModifiedUtc != default;
+
+            if (sizeDiffers)
+            {
+                if (localTimeKnown && remoteTimeKnown)
                 {
+                    var localNewer = localInfo.ModifiedUtc - remoteInfo.ModifiedUtc > TimeTolerance;
+                    var remoteNewer = remoteInfo.ModifiedUtc - localInfo.ModifiedUtc > TimeTolerance;
+
                     if (remoteNewer && !localNewer)
                         item.State = SyncState.DownloadChanged;
                     else if (localNewer && !remoteNewer)
@@ -151,23 +187,29 @@ public static class SyncEngine
                     else
                         item.State = SyncState.Different;
                 }
-                else if (localNewer)
-                {
-                    item.State = SyncState.UploadChanged;
-                }
-                else if (remoteNewer)
-                {
-                    item.State = SyncState.DownloadChanged;
-                }
                 else
                 {
-                    item.State = SyncState.Unchanged;
+                    item.State = SyncState.Different;
                 }
             }
+            else if (!localTimeKnown || !remoteTimeKnown)
+            {
+                item.State = SyncState.Unchanged;
+            }
+            else
+            {
+                var localNewer = localInfo.ModifiedUtc - remoteInfo.ModifiedUtc > TimeTolerance;
+                var remoteNewer = remoteInfo.ModifiedUtc - localInfo.ModifiedUtc > TimeTolerance;
 
-            items.Add(item);
+                if (localNewer)
+                    item.State = SyncState.UploadChanged;
+                else if (remoteNewer)
+                    item.State = SyncState.DownloadChanged;
+                else
+                    item.State = SyncState.Unchanged;
+            }
         }
 
-        return items;
+        return item;
     }
 }

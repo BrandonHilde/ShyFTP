@@ -49,8 +49,16 @@ public sealed class ConfigStore
         if (string.IsNullOrWhiteSpace(json))
             return new AppConfig();
 
-        var config = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions) ?? new AppConfig();
-        return config;
+        try
+        {
+            var config = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions) ?? new AppConfig();
+            config.Servers = new Dictionary<string, ServerProfile>(config.Servers, StringComparer.OrdinalIgnoreCase);
+            return config;
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidOperationException($"Config file '{Path}' is not valid JSON: {ex.Message}", ex);
+        }
     }
 
     public void Save(AppConfig config)

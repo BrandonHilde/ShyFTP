@@ -8,7 +8,12 @@ for (var i = 0; i < args.Length; i++)
 {
     switch (args[i])
     {
-        case "--config" or "-c" when i + 1 < args.Length:
+        case "--config" or "-c":
+            if (i + 1 >= args.Length)
+            {
+                Console.Error.WriteLine("Error: --config requires a path argument.");
+                return 1;
+            }
             configPath = args[++i];
             break;
         case "--help" or "-h":
@@ -32,8 +37,31 @@ Inside the shell, type 'help' for the full command list.
     }
 }
 
-var store = new ConfigStore(configPath ?? ConfigStore.ResolveDefaultPath());
-var config = store.Load();
+ConfigStore store;
+AppConfig config;
+try
+{
+    store = new ConfigStore(configPath ?? ConfigStore.ResolveDefaultPath());
+    config = store.Load();
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine("Failed to load config: " + ex.Message);
+    return 1;
+}
 
-using var shell = new Shell(config, store, startFolder);
-return shell.Run();
+Shell shell;
+try
+{
+    shell = new Shell(config, store, startFolder);
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine("Failed to start: " + ex.Message);
+    return 1;
+}
+
+using (shell)
+{
+    return shell.Run();
+}

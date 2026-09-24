@@ -7,6 +7,8 @@ public static class GlobMatcher
 {
     public const string AllFiles = "*";
 
+    private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(1);
+
     public static bool IsMatch(string pattern, string relativePath)
     {
         if (string.IsNullOrWhiteSpace(pattern))
@@ -26,13 +28,13 @@ public static class GlobMatcher
 
         var regex = "^" + GlobToRegex(pat) + "$";
 
-        if (Regex.IsMatch(path, regex, RegexOptions.IgnoreCase))
+        if (Regex.IsMatch(path, regex, RegexOptions.IgnoreCase, RegexTimeout))
             return true;
 
         if (!pat.Contains('/'))
         {
             var name = path[(path.LastIndexOf('/') + 1)..];
-            if (Regex.IsMatch(name, regex, RegexOptions.IgnoreCase))
+            if (Regex.IsMatch(name, regex, RegexOptions.IgnoreCase, RegexTimeout))
                 return true;
         }
 
@@ -96,6 +98,13 @@ public static class GlobMatcher
                     var set = glob.Substring(i + 1, close - i - 1);
                     if (set.StartsWith('!'))
                         set = "^" + set[1..];
+                    if (set.Length == 0 || set == "^")
+                    {
+                        sb.Append("\\[\\]");
+                        i = close;
+                        break;
+                    }
+
                     sb.Append('[').Append(set).Append(']');
                     i = close;
                     break;
