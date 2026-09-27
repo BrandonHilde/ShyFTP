@@ -137,6 +137,13 @@ public static class SyncEngine
         return items.OrderBy(i => i.RelativePath, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
+    public static List<SyncItem> RecentUploads(IEnumerable<SyncItem> items, DateTime cutoffUtc) =>
+        items
+            .Where(i => i.LocalExists
+                        && i.LocalTime >= cutoffUtc
+                        && i.State is SyncState.UploadNew or SyncState.UploadChanged)
+            .ToList();
+
     private static SyncItem BuildItem(
         string key,
         EntryInfo localInfo,

@@ -145,6 +145,26 @@ public class SyncEngineTests
     }
 
     [Fact]
+    public void RecentUploads_only_returns_newer_local_files_within_window()
+    {
+        var items = SyncEngine.Compare(
+            Map(
+                ("new.txt", 10, T0.AddHours(-1)),
+                ("changed.txt", 10, T0.AddHours(-2)),
+                ("old.txt", 10, T0.AddHours(-20)),
+                ("remote_newer.txt", 10, T0.AddHours(-1))),
+            Map(
+                ("changed.txt", 5, T0.AddHours(-3)),
+                ("old.txt", 10, T0.AddHours(-21)),
+                ("remote_newer.txt", 10, T0.AddHours(1))),
+            "/local", "/remote");
+
+        var recent = SyncEngine.RecentUploads(items, T0.AddHours(-8));
+
+        Assert.Equal(new[] { "changed.txt", "new.txt" }, recent.Select(i => i.RelativePath).OrderBy(p => p));
+    }
+
+    [Fact]
     public void Full_paths_are_built_from_roots()
     {
         var items = SyncEngine.Compare(

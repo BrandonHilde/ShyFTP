@@ -505,15 +505,12 @@ public sealed class Shell : IDisposable
         return PathUtil.JoinRemote(_folder?.RemotePath ?? "/", path);
     }
 
-    private void CmdScan()
+    private bool ScanAll()
     {
-        if (!EnsureClient())
-            return;
-
         if (_folder == null)
         {
             ConsoleUtil.Error("No server mapped to this folder. Use 'map <server> [remotePath]'.");
-            return;
+            return false;
         }
 
         ConsoleUtil.Info("Scanning local files...");
@@ -527,6 +524,16 @@ public sealed class Shell : IDisposable
             _verbose ? p => ConsoleUtil.Muted("  listed /" + p) : null);
 
         _items = SyncEngine.Compare(local, remote, _root, _folder.RemotePath);
+        return true;
+    }
+
+    private void CmdScan()
+    {
+        if (!EnsureClient())
+            return;
+
+        if (!ScanAll())
+            return;
 
         var uploads = _items.Count(i => i.State is SyncState.UploadNew or SyncState.UploadChanged);
         var downloads = _items.Count(i => i.State is SyncState.DownloadNew or SyncState.DownloadChanged);
@@ -884,6 +891,12 @@ public sealed class Shell : IDisposable
 
     private void CmdTransfer(bool upload, List<string> args)
     {
+        if (upload && args.Count >= 1 && args[0].Equals("recent", StringComparison.OrdinalIgnoreCase))
+        {
+            CmdUploadRecent(args.Skip(1).ToList());
+            return;
+        }
+
         if (!EnsureClient())
             return;
 
@@ -926,6 +939,42 @@ public sealed class Shell : IDisposable
             ApplyUploads(targets);
         else
             ApplyDownloads(targets);
+    }
+
+    private void CmdUploadRecent(List<string> args)
+    {
+        if (args.Count == 0 || !TryParseHours(args[0], out var hours))
+        {
+            ConsoleUtil.Error("Usage: upload recent <hours>  (e.g. upload recent 8)");
+            return;
+        }
+
+        if (!EnsureClient())
+            return;
+
+        if (!ScanAll())
+            return;
+
+        var cutoff = DateTime.UtcNow.AddHours(-hours);
+        var targets = SyncEngine.RecentUploads(_items, cutoff);
+
+        if (targets.Count == 0)
+        {
+            ConsoleUtil.Warn($"No files modified in the last {hours} hour(s) are newer than the server.");
+            return;
+        }
+
+        ConsoleUtil.Info($"Here is a list of files to upload ({targets.Count}, modified in the last {hours} hour(s) and newer than the server):");
+        foreach (var item in targets)
+            Console.WriteLine($"  {item.SuggestedAction,-18} {item.RelativePath}");
+
+        if (!ConsoleUtil.Confirm($"Upload all {targets.Count} file(s)?", false))
+        {
+            ConsoleUtil.Muted("Cancelled.");
+            return;
+        }
+
+        ApplyUploads(targets);
     }
 
     private void ApplyUploads(List<SyncItem> targets)
@@ -1328,6 +1377,7 @@ public sealed class Shell : IDisposable
   find <pattern> [--all]         Alias for 'add <pattern>'
   pattern <glob>                 Select change-list items matching a glob (e.g. pattern *.txt)
   upload / push [sel...]         Upload selected (or all candidates)
+  upload recent <hours>          Upload files modified within N hours that are newer than the server
   download / pull [sel...]       Download selected (or all candidates)
   sync                           Scan and approve the full upload/download plan
 

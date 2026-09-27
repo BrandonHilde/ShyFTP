@@ -183,6 +183,7 @@ A relative remote path is resolved against the folder's mapped remote path.
 | `select <sel...>` | Select items |
 | `deselect <sel...>` | Deselect items |
 | `upload` / `push [sel...]` | Upload selected items (or all upload candidates) |
+| `upload recent <hours>` | Upload files modified within the last N hours that are newer than the server |
 | `download` / `pull [sel...]` | Download selected items (or all download candidates) |
 | `add <pattern...>` | Add matching local files to the change list and select them |
 | `remove <pattern...>` | Remove matching items from the change list |
@@ -244,6 +245,17 @@ upload              # upload whatever remains in the list
 ```
 
 `find` and `search` are aliases for `add`.
+
+`upload recent <hours>` performs a fresh scan and uploads only the files modified
+within the last N hours whose local copy is newer than the one on the server (or
+that do not exist on the server at all). Files that are unchanged, older than the
+window, or newer on the server are left alone. It lists the matches and prompts
+before transferring, for example:
+
+```
+upload recent 8     # upload everything changed in the last 8 hours
+upload recent 0.5   # the last 30 minutes
+```
 
 ### Ignoring files
 
