@@ -23,8 +23,8 @@ there are no third-party packages.
 - Bidirectional change detection (upload new/changed, download new/changed,
   review) with a selectable, approvable change list.
 - Per-folder ignore rules, plus global rules.
-- `find <text>` to search the local tree and multi-select matches, and
-  `pattern <glob>` to select from the current change list.
+- One `<what>` syntax (numbers, ranges, keywords, time windows, globs) shared
+  by every change-list command, plus `help <command>` and typo suggestions.
 - UTF-8 support and optional TLS certificate validation bypass.
 
 ## Requirements
@@ -85,7 +85,7 @@ By default the config lives at:
 - Other: `~/.config/ShyFTP/config.json`
 
 It is a plain JSON file. It is created automatically on first run and is updated
-by the `server-*`, `map`, and `ignore` commands, so you rarely need to edit it by
+by the `server`, `map`, and `ignore` commands, so you rarely need to edit it by
 hand.
 
 ```json
@@ -129,81 +129,104 @@ hand.
 ## Quick start
 
 ```
-server-add myserver ftp.example.com
-map myserver /public_html
-connect
-scan
-select up
-upload
+map                 # link this folder to a server (walks you through adding one)
+scan                # compare local and server
+add up              # mark everything that changed locally
+drop *.log          # ...except the logs
+upload              # send what's marked
+```
+
+Or do it all at once with `sync`. Type `help` inside the shell for every
+command, and `help <command>` (or `<command> --help`) for details and examples.
+Mistyped commands get a "did you mean" suggestion.
+
+## Choosing items: `<what>`
+
+Every command that works on the change list - `list`, `add`, `drop`,
+`upload`, `download` - accepts the same `<what>` syntax. Mix as many as you
+like; they combine:
+
+| You type | Picks |
+| --- | --- |
+| `3`, `1,4`, `5-9` | Item numbers from the list |
+| `all` | Everything |
+| `added`, `dropped` | Items marked `[x]` / `[-]` |
+| `up`, `down` | Upload / download candidates |
+| `new`, `changed`, `review`, `unchanged` | Items in that state |
+| `30m`, `8h`, `2d`, `1w` | Changed locally within that time (`recent 8` also means `8h`) |
+| anything else | A glob (`*.css`, `img/**`) or text found in the path (`.txt`) |
+
+```
+list up             # show only upload candidates
+add *.css 2h        # mark CSS files plus anything changed in the last 2 hours
+upload 1-3          # upload exactly items 1 to 3
+drop *.log          # keep log files out of every transfer
+download review     # pull the server's copy of the 'review' items
 ```
 
 ## Command reference
 
-### Folders and servers
+### Setup
 
 | Command | Description |
 | --- | --- |
-| `folder [path]` / `cd [path]` | Show or change the current local folder |
-| `map` / `use` `<server> [remotePath]` | Map this folder to a server and remote path |
-| `unmap` | Remove this folder's mapping |
-| `status` | Show mapping, connection, and change-list state |
-| `servers` | List defined servers |
-| `server-add <name> <host> [port] [user] [pass]` | Add a server (prompts for missing values) |
-| `server-edit <name> <field> <value>` | Edit a server field |
-| `server-remove <name>` | Delete a server |
-| `connect` / `disconnect` (aliases `open` / `close`) | Open / close the FTP connection |
-| `verbose` | Toggle raw FTP command logging |
+| `server` | List servers |
+| `server add [name] [host] [port] [user] [pass]` | Add a server (prompts for anything missing) |
+| `server set <name> <field> [value]` | Change a field; prompts when the value is omitted (handy for `pass`) |
+| `server show <name>` | Show a server's settings |
+| `server remove <name>` | Delete a server |
+| `map [server] [remotePath]` | Link this folder to a server; asks when omitted and offers to create unknown servers |
+| `unmap` | Remove this folder's link |
+| `cd [path]` | Show or change the local folder (relative to the current one) |
+| `status` | Show folder, server, connection and list state |
+| `connect` / `disconnect` | Open / close the connection (other commands connect automatically) |
+| `verbose [on\|off]` | Show raw FTP commands |
 
-Editable server fields: `host`, `port`, `user`, `pass`, `security`, `passive`,
-`validate`, `utf8`.
+`server set` fields: `host`, `port`, `user`, `pass`, `security`
+(`none`/`explicit`/`implicit`), `passive`, `validate`, `utf8`, `pasv-address`
+(`on`/`off`), and `timeout` (seconds). Invalid values are rejected.
 
-### Remote operations
-
-| Command | Description |
-| --- | --- |
-| `pwd` | Print the remote working directory |
-| `ls` / `dir` `[path]` / `ll [path]` | List a remote directory (names / detailed) |
-| `mkdir <remotePath>` | Create a remote directory (recursively) |
-| `rmdir [-r] <remotePath>` | Remove a remote directory (`-r` asks to recurse) |
-| `rm <remotePath>` | Delete a remote file |
-| `rename <from> <to>` | Rename a remote entry |
-| `get <remote> [local]` | Download one file |
-| `put <local> [remote]` | Upload one file |
-
-A relative `<local>` path to `get`/`put` is resolved against the shell's current
-local folder (not the process working directory); an absolute path is used as-is.
-A relative remote path is resolved against the folder's mapped remote path.
-
-### Sync and changing files
+### Sync
 
 | Command | Description |
 | --- | --- |
-| `scan` / `refresh` / `diff` | Compare local vs remote and build the change list |
-| `changes` / `list` | Show the change list |
-| `select <sel...>` | Select items |
-| `deselect <sel...>` | Deselect items |
-| `upload` / `push [sel...]` | Upload selected items (or all upload candidates) |
-| `upload recent <hours>` | Upload files modified within the last N hours that are newer than the server |
-| `download` / `pull [sel...]` | Download selected items (or all download candidates) |
-| `add <pattern...>` | Add matching local files to the change list and select them |
-| `remove <pattern...>` | Remove matching items from the change list |
-| `sync` | Scan, then approve the whole upload/download plan |
+| `scan` | Compare local vs server and build the change list |
+| `sync [-y]` | Scan, then upload and download every change (`review` items are skipped) |
+| `upload [what] [-y]` | Upload the `[x]` items, or exactly `<what>` |
+| `upload 8h` | Fresh scan, then upload files changed in the last 8 hours that are newer than the server |
+| `download [what] [-y]` | Download the `[x]` items, or exactly `<what>` |
 
-`<sel...>` accepts a comma-separated list of one-based indices, ranges, or
-keywords:
+With no `<what>` and nothing marked `[x]`, `upload`/`download` offer to
+transfer every change in that direction that isn't dropped. Dropped items are
+skipped even when named in `<what>`. `-y` skips confirmation prompts.
 
-```
-1,3,5-7        specific items and ranges
-all           everything
-none          clear the selection
-up            upload candidates
-down          download candidates
-new           newly added on either side
-changed       modified on either side (and review items)
-invert        toggle the selection
-```
+### Change list
 
-The change list uses these suggested actions:
+| Command | Description |
+| --- | --- |
+| `list [what]` | Show the change list, optionally filtered (item numbers are kept) |
+| `add <what> [--all]` | Mark items `[x]` to transfer |
+| `drop <what>` | Mark items `[-]` so no transfer touches them |
+| `add none` | Clear every `[x]` (doesn't drop anything) |
+| `add invert` | Swap `[x]` and `[ ]`; dropped items stay dropped |
+
+Each item in the list is in one of three states:
+
+| Mark | Meaning |
+| --- | --- |
+| `[x]` | Added: `upload` / `download` with no arguments transfers these |
+| `[ ]` | Neutral: transferred only by the "all changes" offer or when named |
+| `[-]` | Dropped: never transferred until you `add` it back |
+
+Dropped items stay in the list with their numbers, so `add 4` brings one back.
+Nothing is ever deleted from disk or the server by `add` or `drop`.
+
+Patterns, time windows and `all` given to `add` also search the local folder,
+so you don't need a scan to send a few files: `add *.html` then `upload`.
+Files matching ignore rules are skipped unless you pass `--all`. Numbers and
+keywords such as `up` only pick from an existing list.
+
+Suggested actions shown in the list:
 
 | Action | Meaning |
 | --- | --- |
@@ -214,58 +237,48 @@ The change list uses these suggested actions:
 | `review` | Different size but timestamps don't indicate a direction |
 | `unchanged` | Identical (for example, added to the list by `add`) |
 
-### Building the upload list (`add` / `remove`)
-
-`add` and `remove` manage what is in the list selected for upload. `add` searches
-the current local folder (respecting the folder's recursive setting), adds
-matching files to the change list, and selects them; `remove` pulls matching
-items back out so they will not be uploaded. Both skip ignored files unless you
-pass `--all`.
+### Ignore rules
 
 | Command | Description |
 | --- | --- |
-| `add <pattern...> [--all]` | Add local files whose path matches any pattern (substring or glob) |
-| `add recent <hours> [--all]` | Add local files modified within the last N hours |
-| `add all [--all]` | Add every local file |
-| `remove <pattern...>` | Remove matching items from the upload list |
-| `remove recent <hours>` | Remove items modified within the last N hours |
-| `remove selected` | Remove every currently selected item |
-| `remove all` | Empty the upload list |
-| `remove <n,n,a-b>` | Remove items by index or range |
+| `ignore` | List rules (or, if items are marked `[x]`, ignore their exact paths) |
+| `ignore list` | List rules |
+| `ignore <pattern...>` | Add rules for this folder |
+| `ignore added` | Ignore the exact paths of the `[x]` items |
+| `unignore <pattern...>` | Remove rules |
 
-Examples:
-
-```
-add .txt            # every local file whose path contains ".txt"
-add *.html *.css    # glob patterns
-add recent 8.4      # files changed in the last 8.4 hours
-remove recent 8.4   # drop those again
-remove .log         # drop matching items from the list
-upload              # upload whatever remains in the list
-```
-
-`find` and `search` are aliases for `add`.
-
-`upload recent <hours>` performs a fresh scan and uploads only the files modified
-within the last N hours whose local copy is newer than the one on the server (or
-that do not exist on the server at all). Files that are unchanged, older than the
-window, or newer on the server are left alone. It lists the matches and prompts
-before transferring, for example:
-
-```
-upload recent 8     # upload everything changed in the last 8 hours
-upload recent 0.5   # the last 30 minutes
-```
-
-### Ignoring files
+### Server files
 
 | Command | Description |
 | --- | --- |
-| `pattern` / `match` `<glob>` | Select change-list items matching a glob |
-| `ignore <pattern...>` | Add ignore rule(s) |
-| `ignore` | With items selected, ignore those exact paths |
-| `unignore <pattern>` | Remove an ignore rule |
-| `ignored` | Show all ignore rules |
+| `ls [-l] [path]` / `ll [path]` | List a server directory (names / details) |
+| `pwd` | Print the server's working directory |
+| `get <remote> [local]` | Download one file |
+| `put <local> [remote]` | Upload one file |
+| `mkdir <path>` | Create a directory (recursively) |
+| `rm <path...>` | Delete files |
+| `rm -r <dir>` / `rmdir [-r] <dir>` | Delete a directory (`-r` recurses, asks first) |
+| `rename <from> <to>` | Rename or move |
+
+Relative local paths are resolved against the shell's current folder; relative
+remote paths against the folder's mapped remote path.
+
+### Older command names
+
+Everything from earlier versions still works: `server-add`, `server-edit`,
+`server-remove`, `servers`, `folder`, `use`, `open`/`close`, `refresh`/`diff`,
+`changes`, `select`/`pattern`/`match`/`find`/`search` (= `add`),
+`deselect`/`unselect`/`remove` (= `drop`), `select none` (= `add none`),
+`push`/`pull`, `ignored` (= `ignore list`), `dir`, `mv`, `ignore selected`, and
+the `recent <hours>` form.
+
+Behaviour changes from earlier versions:
+
+- `upload <what>` / `download <what>` transfer exactly those items. Previously
+  they added them to the current selection and transferred the whole selection.
+- `drop` (old `remove`) marks items `[-]` instead of deleting them from the
+  list, so numbers stay stable and items can be added back. Use `list up`,
+  `list changed` etc. to shorten the display instead.
 
 ### Ignore pattern syntax
 
@@ -284,7 +297,7 @@ Examples: `.txt`, `*.log`, `bin/**`, `.git/**`, `build/*.tmp`.
 
 - **Passwords are stored in plaintext** in the config file. This is a deliberate
   consequence of having no external dependencies (no DPAPI/secret-store
-  library). Protect the file with OS file permissions. The `server-add` password
+  library). Protect the file with OS file permissions. The `server add` password
   prompt does not echo to the terminal.
 - **SFTP/SSH is not supported.** The engine implements FTP and FTPS only.
 - FTP servers that only support `LIST` (no `MLSD`) lose some metadata; modified
@@ -303,7 +316,8 @@ Ftp/FtpClient.cs           From-scratch FTP/FTPS engine
 Ftp/FtpReply.cs            Reply types, exceptions, list item model
 Sync/SyncEngine.cs         Local/remote scanning and change comparison
 Sync/SyncItem.cs           Change-list item model
-Cli/Shell.cs               Interactive console shell
+Cli/Shell.cs               Interactive console shell and command table
+Cli/ItemSelector.cs        The shared <what> selection syntax
 Cli/ConsoleUtil.cs         Console helpers
 Util/GlobMatcher.cs        Glob / substring matching
 Util/PathUtil.cs           Path and size formatting helpers

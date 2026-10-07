@@ -26,6 +26,9 @@ public sealed class SyncItem
 
     public bool Selected { get; set; }
 
+    /// <summary>Explicitly taken out of the plan with 'drop'; skipped by transfers until added back.</summary>
+    public bool Dropped { get; set; }
+
     public string? LocalFullPath { get; set; }
     public string? RemoteFullPath { get; set; }
 
